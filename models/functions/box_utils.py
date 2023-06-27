@@ -10,29 +10,30 @@ class BBoxTransform(nn.Module):
     Note that [mean, std] are invariant, in order to enlarge relative values, which will help to regression.
     """
 
-    def __init__(self, mean=None, std=None):
+    def __init__(self, mean=None, std=None, gpu_device=0):
         super(BBoxTransform, self).__init__()
         if mean is None:
             if torch.cuda.is_available():
-                self.mean = torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)).cuda()
+                self.mean = torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)).to(gpu_device)
             else:
                 self.mean = torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32))
         else:
             self.mean = mean
         if std is None:
             if torch.cuda.is_available():
-                self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)).cuda()
+                self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)).to(gpu_device)
             else:
                 self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32))
         else:
             self.std = std
 
     def forward(self, boxes, deltas):
-
-        widths = boxes[:, :, 2] - boxes[:, :, 0]
-        heights = boxes[:, :, 3] - boxes[:, :, 1]
-        ctr_x = boxes[:, :, 0] + 0.5 * widths
-        ctr_y = boxes[:, :, 1] + 0.5 * heights
+        # boxes  = anchors.shape = [1, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, 4] = [1, 81840, 4]
+        # deltas = regression.shape = [2, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, 4] = [2, 81840, 4]
+        widths = boxes[:, :, 2] - boxes[:, :, 0]  # shape = [1, 81840]
+        heights = boxes[:, :, 3] - boxes[:, :, 1] # shape = [1, 81840]
+        ctr_x = boxes[:, :, 0] + 0.5 * widths     # shape = [1, 81840]
+        ctr_y = boxes[:, :, 1] + 0.5 * heights    # shape = [1, 81840]
 
         dx = deltas[:, :, 0] * self.std[0] + self.mean[0]
         dy = deltas[:, :, 1] * self.std[1] + self.mean[1]
@@ -44,13 +45,12 @@ class BBoxTransform(nn.Module):
         pred_w = torch.exp(dw) * widths
         pred_h = torch.exp(dh) * heights
 
-        pred_boxes_x1 = pred_ctr_x - 0.5 * pred_w
+        pred_boxes_x1 = pred_ctr_x - 0.5 * pred_w # shape = [1, 81840]
         pred_boxes_y1 = pred_ctr_y - 0.5 * pred_h
         pred_boxes_x2 = pred_ctr_x + 0.5 * pred_w
         pred_boxes_y2 = pred_ctr_y + 0.5 * pred_h
 
-        pred_boxes = torch.stack([pred_boxes_x1, pred_boxes_y1, pred_boxes_x2, pred_boxes_y2], dim=2)
-
+        pred_boxes = torch.stack([pred_boxes_x1, pred_boxes_y1, pred_boxes_x2, pred_boxes_y2], dim=2) # shape = [1, 81840, 4]
         return pred_boxes
 
 

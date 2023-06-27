@@ -8,13 +8,18 @@ class FocalLoss(nn.Module):
     #def __init__(self):
 
     def forward(self, classifications, regressions, anchors, annotations):
+        # classifications.shape = [2, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, num_classes] = [2, 81840, 7]
+        # regressions.shape     = [2, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, 4] = [2, 81840, 4] [x_min, y_min, x_max, y_max]
+        # anchors.shape         = [1, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, 4] = [1, 81840, 4] [x_min, y_min, x_max, y_max]
+        # annotations.shape     = [2, 60, 5] [x_min, y_min, x_max, y_max, class_id]
+
         alpha = 0.25
         gamma = 2.0
         batch_size = classifications.shape[0]
         classification_losses = []
         regression_losses = []
 
-        anchor = anchors[0, :, :]
+        anchor = anchors[0, :, :] # shape = [81840, 4] [x_min, y_min, x_max, y_max]
 
         anchor_widths  = anchor[:, 2] - anchor[:, 0]
         anchor_heights = anchor[:, 3] - anchor[:, 1]
@@ -23,11 +28,11 @@ class FocalLoss(nn.Module):
 
         for j in range(batch_size):
 
-            classification = classifications[j, :, :]
-            regression = regressions[j, :, :]
+            classification = classifications[j, :, :] # shape = [81840, 7]
+            regression = regressions[j, :, :] # shape = [81840, 4]
 
-            bbox_annotation = annotations[j, :, :]
-            bbox_annotation = bbox_annotation[bbox_annotation[:, 4] != -1]
+            bbox_annotation = annotations[j, :, :] # shape = [60, 5]
+            bbox_annotation = bbox_annotation[bbox_annotation[:, 4] != -1] # shape = [num_annotations, 5]
 
             classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
 
@@ -63,11 +68,13 @@ class FocalLoss(nn.Module):
                 continue
 
             IoU = calc_iou(anchors[0, :, :], bbox_annotation[:, :4])  # num_anchors x num_annotations
-
+            # anchors[0, :, :].shape       = [num_anchors=81840, 4]
+            # bbox_annotation[:, :4].shape = [num_annotations  , 4]
+            # IoU.shape = [num_anchors=81840, num_annotations]
             IoU_max, IoU_argmax = torch.max(IoU, dim=1) # num_anchors x 1
 
             # compute the loss for classification
-            targets = torch.ones(classification.shape) * -1
+            targets = torch.ones(classification.shape) * -1 # shape = [81840, 7]
 
             if torch.cuda.is_available():
                 targets = targets.cuda()
@@ -78,7 +85,7 @@ class FocalLoss(nn.Module):
 
             num_positive_anchors = positive_indices.sum()
 
-            assigned_annotations = bbox_annotation[IoU_argmax, :]
+            assigned_annotations = bbox_annotation[IoU_argmax, :] # shape = [num_anchors=81840, 5]
 
             targets[positive_indices, :] = 0
             targets[positive_indices, assigned_annotations[positive_indices, 4].long()] = 1
@@ -155,6 +162,8 @@ class FocalLoss(nn.Module):
 
 
 def calc_iou(a, b):
+    # a: anchors          [num_anchors    , 4] = [81840, 4]
+    # b: bbox_annotations [num_annotations, 4]
     area = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
 
     iw = torch.min(torch.unsqueeze(a[:, 2], dim=1), b[:, 2]) - torch.max(torch.unsqueeze(a[:, 0], 1), b[:, 0])
@@ -169,6 +178,6 @@ def calc_iou(a, b):
 
     intersection = iw * ih
 
-    IoU = intersection / ua
+    IoU = intersection / ua # [num_anchors, num_annotations] = [81840, num_annotations]
 
     return IoU

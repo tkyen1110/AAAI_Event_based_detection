@@ -13,7 +13,7 @@ from models.modules.eventpillars import PillarFeatureNet, EventPillarsScatter
 
 class DMANet(nn.Module):
 
-    def __init__(self, in_channels, num_classes, block, layers):
+    def __init__(self, in_channels, num_classes, block, layers, gpu_device):
         super(DMANet, self).__init__()
         self.inplanes = 64
 
@@ -55,12 +55,12 @@ class DMANet(nn.Module):
         self.aggregation_layer = nn.Sequential(NonLocalAggregationModule(in_channels=128, reduction=2),
                                                NonLocalAggregationModule(in_channels=256, reduction=2),
                                                NonLocalAggregationModule(in_channels=256, reduction=2))
-        self.fpn = FeaturesPyramidNetwork(fpn_sizes[0], fpn_sizes[1], fpn_sizes[2])  # FPN
+        self.fpn = FeaturesPyramidNetwork(fpn_sizes[0], fpn_sizes[1], fpn_sizes[2])  # FPN(128, 256, 256)
         self.regressionModel = RegressionModel(256)
         self.classificationModel = ClassificationModel(256, num_classes=num_classes)
 
-        self.anchors = Anchors()
-        self.focalLoss = FocalLoss()
+        self.anchors = Anchors(gpu_device=gpu_device)
+        # self.focalLoss = FocalLoss()
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -95,38 +95,54 @@ class DMANet(nn.Module):
         for pos_x, neg_x in zip(pos_x_list, neg_x_list):  # each batch
             pos_pillar_x, pos_pillar_y, pos_pillar_t, pos_num_points, pos_mask, pos_coors = pos_x
             neg_pillar_x, neg_pillar_y, neg_pillar_t, neg_num_points, neg_mask, neg_coors = neg_x
+            # pos_pillar_x.shape   = [1, 1, P, N=5]
+            # pos_num_points.shape = [1, P]
+            # pos_mask.shape       = [1, 1, P, N=5]
+            # pos_coors.shape      = [P, 3]
+
             pos_voxel_features = self.voxel_feature_extractor(pos_pillar_x, pos_pillar_y, pos_pillar_t, pos_num_points,
                                                               pos_mask)
             neg_voxel_features = self.voxel_feature_extractor(neg_pillar_x, neg_pillar_y, neg_pillar_t, neg_num_points,
                                                               neg_mask)
+            # pos_voxel_features.shape = [1, D=8, P, N=1]
+
             pos_voxel_features = pos_voxel_features.squeeze(dim=0).squeeze(dim=-1).permute(1, 0)
             neg_voxel_features = neg_voxel_features.squeeze(dim=0).squeeze(dim=-1).permute(1, 0)
+            # pos_voxel_features.shape = [P, D=8]
 
             # spatial_feature input size
             pos_spatial_features = self.middle_feature_extractor(pos_voxel_features, pos_coors.type(dtype=torch.int32))
             neg_spatial_features = self.middle_feature_extractor(neg_voxel_features, neg_coors.type(dtype=torch.int32))
+            # pos_spatial_features.shape = [1, D=8, H=512, W=512]
+
             pos_spatial_feature_list.append(pos_spatial_features), neg_spatial_feature_list.append(neg_spatial_features)
 
         pos_spatial_feature = torch.cat([pos for pos in pos_spatial_feature_list], dim=0)
         neg_spatial_feature = torch.cat([neg for neg in neg_spatial_feature_list], dim=0)
-        spatial_feature = torch.cat([pos_spatial_feature, neg_spatial_feature], dim=1)
+        # pos_spatial_feature.shape = [2, D=8, H=512, W=512]
 
-        x = self.input_layer(spatial_feature)
-        x1 = self.layer1(x)  # 128
+        spatial_feature = torch.cat([pos_spatial_feature, neg_spatial_feature], dim=1)
+        # spatial_feature.shape = [2, D=16, H=512, W=512]
+
+        x = self.input_layer(spatial_feature) # shape = [2, 64, 128, 128]
+        x1 = self.layer1(x) # shape = [2, 64, 128, 128]
 
         if prev_states is None:
             prev_states = [None] * 3
 
-        x2 = self.layer2(x1)
+        x2 = self.layer2(x1) # shape = [2, 128, 64, 64]
         x2_lstm = self.layer2_lstm(x2, prev_states[0])
+        # hidden, cell, input_ = x2_lstm <= shape = [2, 128, 64, 64]
         states.append(x2_lstm)
 
-        x3 = self.layer3(x2)
+        x3 = self.layer3(x2) # shape = [2, 256, 32, 32]
         x3_lstm = self.layer3_lstm(x3, prev_states[1])
+        # hidden, cell, input_ = x3_lstm <= shape = [2, 256, 32, 32]
         states.append(x3_lstm)
 
-        x4 = self.layer4(x3)
+        x4 = self.layer4(x3) # shape = [2, 256, 16, 16]
         x4_lstm = self.layer4_lstm(x4, prev_states[2])
+        # hidden, cell, input_ = x4_lstm <= shape = [2, 256, 16, 16]
         states.append(x4_lstm)
 
         # short memory path
@@ -138,8 +154,8 @@ class DMANet(nn.Module):
             for idx, (curr, prev) in enumerate(zip(fpn_features, prev_features)):
                 batch_list = []
                 for idy in range(curr.shape[0]):  # batch size
-                    curr_f = curr[idy].unsqueeze(0)
-                    prev_f = prev[idy].unsqueeze(0)
+                    curr_f = curr[idy].unsqueeze(0) # idx=0 => [1, 128, 64, 64], idx=1 => [1, 256, 32, 32], idx=2 => [1, 256, 16, 16]
+                    prev_f = prev[idy].unsqueeze(0) # idx=0 => [1, 128, 64, 64], idx=1 => [1, 256, 32, 32], idx=2 => [1, 256, 16, 16]
                     agg_feat = self.aggregation_layer[idx](curr_f, prev_f)
                     batch_list.append(agg_feat)
                 batch_agg_feat = torch.cat([b for b in batch_list], dim=0)
@@ -147,21 +163,29 @@ class DMANet(nn.Module):
 
         # [64, 32, 16, 8, 4]
         short_features = self.fpn(agg_features)
+        # short_features:
+        # P3_x.shape= [2, 256, 64, 64]
+        # P4_x.shape = [2, 256, 32, 32]
+        # P5_x.shape = [2, 256, 16, 16]
+        # P6_x.shape = [2, 256, 8, 8]
+        # P7_x.shape = [2, 256, 4, 4]
 
         # long memory path
         long_features = self.fpn([x2_lstm[0], x3_lstm[0], x4_lstm[0]])
 
-        temporal_feature2 = self.temporal_layer2(x2_lstm[0])
-        temporal_feature3 = self.temporal_layer3(x3_lstm[0])
-        temporal_feature4 = self.temporal_layer4(x4_lstm[0])
-        temporal_feature5 = self.temporal_layer5(temporal_feature4)
-        temporal_feature6 = self.temporal_layer6(temporal_feature5)
-
+        temporal_feature2 = self.temporal_layer2(x2_lstm[0]) # shape = [2, 256, 64, 64]
+        temporal_feature3 = self.temporal_layer3(x3_lstm[0]) # shape = [2, 256, 32, 32]
+        temporal_feature4 = self.temporal_layer4(x4_lstm[0]) # shape = [2, 256, 16, 16]
+        temporal_feature5 = self.temporal_layer5(temporal_feature4) # shape = [2, 256, 8, 8]
+        temporal_feature6 = self.temporal_layer6(temporal_feature5) # shape = [2, 256, 4, 4]
         temporal_feature = [temporal_feature2, temporal_feature3, temporal_feature4, temporal_feature5, temporal_feature6]
 
         regression = torch.cat([self.regressionModel(s+l+t) for s, l, t in zip(short_features, long_features, temporal_feature)], dim=1)
+        # regression.shape = [2, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, 4] = [2, 81840, 4]
         classification = torch.cat([self.classificationModel(s+l+t) for s, l, t in zip(short_features, long_features, temporal_feature)], dim=1)
+        # classification.shape = [2, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, num_classes] = [2, 81840, 7]
         anchors = self.anchors(spatial_feature)
+        # anchors.shape = [1, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, 4] = [1, 81840, 4]
         return classification, regression, anchors, states, fpn_features, spatial_feature
 
 
@@ -254,45 +278,45 @@ class ClassificationModel(nn.Module):
         return out2.contiguous().view(x.shape[0], -1, self.num_classes)
 
 
-def DMANet18(in_channels, num_classes, pretrained=False, **kwargs):
+def DMANet18(in_channels, num_classes, pretrained=False, gpu_device=0, **kwargs):
     """Constructs a ResNet-18 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = DMANet(in_channels, num_classes, BasicBlock, [2, 2, 2, 2], **kwargs)
+    model = DMANet(in_channels, num_classes, BasicBlock, [2, 2, 2, 2], gpu_device, **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet18'], model_dir='.'), strict=False)
     return model
 
 
-def DMANet34(in_channels, num_classes, pretrained=False, **kwargs):
+def DMANet34(in_channels, num_classes, pretrained=False, gpu_device=0, **kwargs):
     """Constructs a ResNet-34 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = DMANet(in_channels, num_classes, BasicBlock, [3, 4, 6, 3], **kwargs)
+    model = DMANet(in_channels, num_classes, BasicBlock, [3, 4, 6, 3], gpu_device, **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet34'], model_dir='.'), strict=False)
     return model
 
 
-def DMANet50(in_channels, num_classes, pretrained=False, **kwargs):
+def DMANet50(in_channels, num_classes, pretrained=False, gpu_device=0, **kwargs):
     """Constructs a ResNet-50 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = DMANet(in_channels, num_classes, Bottleneck, [3, 4, 6, 3], **kwargs)
+    model = DMANet(in_channels, num_classes, Bottleneck, [3, 4, 6, 3], gpu_device, **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet50'], model_dir='.'), strict=False)
     return model
 
 
-def DMANet101(in_channels, num_classes, pretrained=False, **kwargs):
+def DMANet101(in_channels, num_classes, pretrained=False, gpu_device=0, **kwargs):
     """Constructs a ResNet-101 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = DMANet(in_channels, num_classes, Bottleneck, [3, 4, 23, 3], **kwargs)
+    model = DMANet(in_channels, num_classes, Bottleneck, [3, 4, 23, 3], gpu_device, **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet101'], model_dir='.'), strict=False)
     return model

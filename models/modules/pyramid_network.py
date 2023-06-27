@@ -7,10 +7,9 @@ import torch.nn as nn
 
 
 class FeaturesPyramidNetwork(nn.Module):
-
     def __init__(self, C3_size, C4_size, C5_size, feature_size=256):
         super(FeaturesPyramidNetwork, self).__init__()
-
+        # C3_size=128, C4_size=256, C5_size=256
         # upsample C5 to get P5 from the FPN paper
         self.P5_1 = nn.Conv2d(C5_size, feature_size, kernel_size=1, stride=1, padding=0)
         self.P5_upsampled = nn.Upsample(scale_factor=2, mode='nearest')
@@ -33,10 +32,13 @@ class FeaturesPyramidNetwork(nn.Module):
         self.P7_2 = nn.Conv2d(feature_size, feature_size, kernel_size=3, stride=2, padding=1)
 
     def forward(self, inputs):
-        C3, C4, C5 = inputs
+        C3, C4, C5 = inputs # 128, 256, 256
+        # C3.shape = [2, 128, 64, 64]
+        # C4.shape = [2, 256, 32, 32]
+        # C5.shape = [2, 256, 16, 16]
 
-        P5_x = self.P5_1(C5)
-        P5_upsampled_x = self.P5_upsampled(P5_x)
+        P5_x = self.P5_1(C5) # shape = [2, 256, 16, 16]
+        P5_upsampled_x = self.P5_upsampled(P5_x) # shape = [2, 256, 32, 32]
         P5_x = self.P5_2(P5_x)
 
         P4_x = self.P4_1(C4)
@@ -53,4 +55,9 @@ class FeaturesPyramidNetwork(nn.Module):
         P7_x = self.P7_1(P6_x)
         P7_x = self.P7_2(P7_x)
 
+        # P3_x.shape= [2, 256, 64, 64]
+        # P4_x.shape = [2, 256, 32, 32]
+        # P5_x.shape = [2, 256, 16, 16]
+        # P6_x.shape = [2, 256, 8, 8]
+        # P7_x.shape = [2, 256, 4, 4]
         return [P3_x, P4_x, P5_x, P6_x, P7_x]

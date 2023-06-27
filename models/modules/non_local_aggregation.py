@@ -41,25 +41,25 @@ class NonLocalAggregationModule(nn.Module):
         :param curr_x: current frame (HxWxC)
         :param adja_x: adjacent frames (NxHxWxC)
         """
-        n, _, h, w = adja_x.shape
-        g_x = self.g(adja_x)
-        g_x = self.g_max(g_x).view(n, self.inter_channels, -1)
-        g_x = g_x.permute(0, 2, 1)  # N x HW x C
+        n, _, h, w = adja_x.shape # idx=0 => [1, 128, 64, 64]
+        g_x = self.g(adja_x) # idx=0 => [1, 64, 64, 64]
+        g_x = self.g_max(g_x).view(n, self.inter_channels, -1) # idx=0 => [1, 64, 32*32] = [1, 64, 1024]
+        g_x = g_x.permute(0, 2, 1)  # N x HW x C # idx=0 => [1, 1024, 64]
 
-        theta_x = self.theta(curr_x).view(1, self.inter_channels, -1)
-        theta_x = theta_x.permute(0, 2, 1)  # 1 x HW x C
+        theta_x = self.theta(curr_x).view(1, self.inter_channels, -1) # idx=0 => [1, 64, 64*64] = [1, 64, 4096]
+        theta_x = theta_x.permute(0, 2, 1)  # 1 x HW x C # idx=0 => [1, 4096, 64]
 
-        phi_x = self.phi(adja_x)
-        phi_x = self.phi_max(phi_x).view(n, self.inter_channels, -1)  # N x C x HW
-        pairwise_weight = torch.matmul(theta_x.type(torch.float32), phi_x.type(torch.float32))  # N x HW x HW
+        phi_x = self.phi(adja_x) # idx=0 => [1, 64, 64, 64]
+        phi_x = self.phi_max(phi_x).view(n, self.inter_channels, -1)  # N x C x HW # idx=0 => [1, 64, 32*32] = [1, 64, 1024]
+        pairwise_weight = torch.matmul(theta_x.type(torch.float32), phi_x.type(torch.float32))  # N x HW x HW # idx=0 => [1, 4096, 1024]
 
         # pairwise_weight /= theta_x.shape[-1]
         pairwise_weight /= theta_x.shape[-1] ** 0.5
         pairwise_weight = pairwise_weight.softmax(dim=-1)
 
-        y = torch.matmul(pairwise_weight, g_x.type(torch.float32))  # N x HW x C
-        y = y.permute(0, 2, 1).contiguous().reshape(n, self.inter_channels, h, w)  # must contiguous
-        att_x = self.att_layer(y)
+        y = torch.matmul(pairwise_weight, g_x.type(torch.float32))  # N x HW x C # idx=0 => [1, 4096, 64]
+        y = y.permute(0, 2, 1).contiguous().reshape(n, self.inter_channels, h, w)  # must contiguous # idx=0 => [1, 64, 64, 64]
+        att_x = self.att_layer(y) # idx=0 => [1, 128, 64, 64]
         x = curr_x + att_x
         # x1 = self.conv1(x)
         # x2 = self.conv2(x1)

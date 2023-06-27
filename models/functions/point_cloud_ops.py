@@ -19,11 +19,11 @@ def _points_to_voxel_reverse_kernel(points,
     # ndim = points.shape[1] - 1
     ndim = 3
     ndim_minus_1 = ndim - 1
-    grid_size = (coors_range[3:] - coors_range[:3]) / voxel_size
+    grid_size = (coors_range[3:] - coors_range[:3]) / voxel_size # [512, 512, 1]
     # np.round(grid_size)
     # grid_size = np.round(grid_size).astype(np.int64)(np.int32)
-    grid_size = np.round(grid_size, 0, grid_size).astype(np.int32)
-    coor = np.zeros(shape=(3, ), dtype=np.int32)
+    grid_size = np.round(grid_size, 0, grid_size).astype(np.int32) # [512, 512, 1]
+    coor = np.zeros(shape=(3, ), dtype=np.int32) # [t, y, x]
     voxel_num = 0
     failed = False
     for i in range(N):
@@ -37,6 +37,7 @@ def _points_to_voxel_reverse_kernel(points,
         if failed:
             continue
         voxelidx = coor_to_voxelidx[coor[0], coor[1], coor[2]]
+
         if voxelidx == -1:
             voxelidx = voxel_num
             if voxel_num >= max_voxels:
@@ -69,13 +70,13 @@ def _points_to_voxel_kernel(points,
     N = points.shape[0]
     # ndim = points.shape[1] - 1
     ndim = 3
-    grid_size = (coors_range[3:] - coors_range[:3]) / voxel_size
+    grid_size = (coors_range[3:] - coors_range[:3]) / voxel_size # [512, 512, 1]
     # grid_size = np.round(grid_size).astype(np.int64)(np.int32)
-    grid_size = np.round(grid_size, 0, grid_size).astype(np.int32)
+    grid_size = np.round(grid_size, 0, grid_size).astype(np.int32) # [512, 512, 1]
 
     lower_bound = coors_range[:3]
     upper_bound = coors_range[3:]
-    coor = np.zeros(shape=(3, ), dtype=np.int32)
+    coor = np.zeros(shape=(3, ), dtype=np.int32) # [x, y, t]
     voxel_num = 0
     failed = False
     for i in range(N):
@@ -138,16 +139,16 @@ def points_to_voxel(points,
         voxel_size = np.array(voxel_size, dtype=points.dtype)
     if not isinstance(coors_range, np.ndarray):
         coors_range = np.array(coors_range, dtype=points.dtype)
-    voxelmap_shape = (coors_range[3:] - coors_range[:3]) / voxel_size
-    voxelmap_shape = tuple(np.round(voxelmap_shape).astype(np.int32).tolist())
+    voxelmap_shape = (coors_range[3:] - coors_range[:3]) / voxel_size # [512, 512, 1]
+    voxelmap_shape = tuple(np.round(voxelmap_shape).astype(np.int32).tolist()) # [512, 512, 1]
     if reverse_index:
-        voxelmap_shape = voxelmap_shape[::-1]
+        voxelmap_shape = voxelmap_shape[::-1] # [1, 512, 512]
     # don't create large array in jit(nopython=True) code.
-    num_points_per_voxel = np.zeros(shape=(max_voxels, ), dtype=np.int32)
-    coor_to_voxelidx = -np.ones(shape=voxelmap_shape, dtype=np.int32)
+    num_points_per_voxel = np.zeros(shape=(max_voxels, ), dtype=np.int32) # shape = (P=100000, )
+    coor_to_voxelidx = -np.ones(shape=voxelmap_shape, dtype=np.int32) # shape = (1, 512, 512)
     voxels = np.zeros(
-        shape=(max_voxels, max_points, points.shape[-1]), dtype=points.dtype)
-    coors = np.zeros(shape=(max_voxels, 3), dtype=np.int32)
+        shape=(max_voxels, max_points, points.shape[-1]), dtype=points.dtype) # shape = (P=100000, N=5, D=3)
+    coors = np.zeros(shape=(max_voxels, 3), dtype=np.int32) # shape = (P=100000, D=3)
     if reverse_index:
         voxel_num = _points_to_voxel_reverse_kernel(
             points, voxel_size, coors_range, num_points_per_voxel,

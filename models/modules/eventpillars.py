@@ -44,10 +44,11 @@ class PFNLayer(nn.Module):
         self.conv3 = nn.Conv2d(8, 8, kernel_size=(1, 4), stride=(1, 2))
 
     def forward(self, input):
-        x = self.conv1(input)
-        x = self.norm(x)
-        x = F.relu(x)
-        x = self.conv3(x)
+        # input.shape = [1, D=6, P, N=5]
+        x = self.conv1(input) # x.shape = [1, D=8, P, N=5]
+        x = self.norm(x) # x.shape = [1, D=8, P, N=5]
+        x = F.relu(x) # x.shape = [1, D=8, P, N=5]
+        x = self.conv3(x) # x.shape = [1, D=8, P, N=1]
         return x
 
 
@@ -78,7 +79,7 @@ class PillarFeatureNet(nn.Module):
         self._with_distance = with_distance
 
         # Create PillarFeatureNet layers
-        num_filters = [num_input_features] + list(num_filters)
+        num_filters = [num_input_features] + list(num_filters) # [6, 8]
         pfn_layers = []
         for i in range(len(num_filters) - 1):
             in_filters = num_filters[i]
@@ -91,21 +92,24 @@ class PillarFeatureNet(nn.Module):
         self.pfn_layers = nn.ModuleList(pfn_layers)
 
     def forward(self, pillar_x, pillar_y, pillar_z, num_voxels, mask):
+        # pillar_x.shape   = [1, 1, P, N=5]
+        # num_voxels.shape = [1, P]
+        # mask.shape       = [1, 1, P, N=5]
 
         # Find distance of x, y, and z from cluster center
         # pillar_xyz =  torch.cat((pillar_x, pillar_y, pillar_z), 3)
-        pillar_xyz = torch.cat((pillar_x, pillar_y, pillar_z), 1)
+        pillar_xyz = torch.cat((pillar_x, pillar_y, pillar_z), 1) # [1, D=3, P, N=5]
 
         # points_mean = pillar_xyz.sum(dim=2, keepdim=True) / num_voxels.view(1,-1, 1, 1)
-        points_mean = pillar_xyz.sum(dim=3, keepdim=True) / num_voxels.view(1, 1, -1, 1)
-        f_cluster = pillar_xyz - points_mean
-
+        points_mean = pillar_xyz.sum(dim=3, keepdim=True) / num_voxels.view(1, 1, -1, 1) # [1, D=3, P, 1]
+        #             [1, D=3, P, 1]                        [1, 1, P, 1]
+        f_cluster = pillar_xyz - points_mean # [1, D=3, P, N=5]
         features_list = [pillar_xyz, f_cluster]
 
-        features = torch.cat(features_list, dim=1)
-        masked_features = features * mask
+        features = torch.cat(features_list, dim=1) # [1, D=6, P, N=5]
+        masked_features = features * mask # [1, D=6, P, N=5]
 
-        pillar_feature = self.pfn_layers[0](masked_features)
+        pillar_feature = self.pfn_layers[0](masked_features) # [1, D=8, P, N=1]
         return pillar_feature
 
 
@@ -130,28 +134,32 @@ class EventPillarsScatter(nn.Module):
 
     # @amp.float_function
     def forward(self, voxel_features, coords):
+        # voxel_features.shape = [P, D=8]
+        # coords.shape = [P, 3]  [t, y, x]
+
         # batch_canvas will be the final output.
         batch_canvas = []
 
         canvas = torch.zeros(self.nchannels, self.nx * self.ny, dtype=voxel_features.dtype,
-                             device=voxel_features.device)
+                             device=voxel_features.device) # shape = [8, 512*512]
         indices = coords[:, 1] * self.nx + coords[:, 2]
         indices = indices.type(torch.float64)
-        transposed_voxel_features = voxel_features.t()
+        transposed_voxel_features = voxel_features.t() # shape = [D=8, P]
         # Now scatter the blob back to the canvas.
         indices_2d = indices.view(1, -1)
         ones = torch.ones([self.nchannels, 1], dtype=torch.float64, device=voxel_features.device)
         # indices_num_channel = torch.mm(ones, indices_2d)
         indices_num_channel = ones * indices_2d
         indices_num_channel = indices_num_channel.type(torch.int64)
-        scattered_canvas = canvas.scatter_(1, indices_num_channel, transposed_voxel_features)
+        scattered_canvas = canvas.scatter_(1, indices_num_channel, transposed_voxel_features) # shape = [D=8, H*W]
 
         # Append to a list for later stacking.
         batch_canvas.append(scattered_canvas)
 
         # Stack to 3-dim tensor (batch-size, nchannels, nrows*ncols)
-        batch_canvas = torch.stack(batch_canvas, 0)
+        batch_canvas = torch.stack(batch_canvas, 0) # shape = [1, D=8, H*W]
 
         # Undo the column stacking to final 4-dim tensor
-        batch_canvas = batch_canvas.view(1, self.nchannels, self.ny, self.nx)
+        batch_canvas = batch_canvas.view(1, self.nchannels, self.ny, self.nx) # shape = [1, D=8, H=512, W=512]
+
         return batch_canvas

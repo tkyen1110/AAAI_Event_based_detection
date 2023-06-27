@@ -4,7 +4,7 @@ import torch.nn as nn
 
 
 class Anchors(nn.Module):
-    def __init__(self, pyramid_levels=None, strides=None, sizes=None, ratios=None, scales=None):
+    def __init__(self, pyramid_levels=None, strides=None, sizes=None, ratios=None, scales=None, gpu_device=0):
         super(Anchors, self).__init__()
 
         if pyramid_levels is None:
@@ -18,25 +18,26 @@ class Anchors(nn.Module):
             self.ratios = np.array([1/3, 1/2, 1, 2, 3])
         if scales is None:   # scale = [1, 1.26, 1.587]
             self.scales = np.array([2 ** 0, 2 ** (1.0 / 3.0), 2 ** (2.0 / 3.0)])
+        self.gpu_device = gpu_device
 
     def forward(self, image):
 
-        image_shape = image.shape[2:]
+        image_shape = image.shape[2:] # [H=512, W=512]
         image_shape = np.array(image_shape)
-        image_shapes = [(image_shape + 2 ** x - 1) // (2 ** x) for x in self.pyramid_levels]
+        image_shapes = [(image_shape + 2 ** x - 1) // (2 ** x) for x in self.pyramid_levels] # [[64,64], [32,32], [16,16], [8,8], [4,4]]
 
         # compute anchors over all pyramid levels
         all_anchors = np.zeros((0, 4)).astype(np.float32)
 
-        for idx, p in enumerate(self.pyramid_levels):
-            anchors = generate_anchors(base_size=self.sizes[idx], ratios=self.ratios, scales=self.scales)
-            shifted_anchors = shift(image_shapes[idx], self.strides[idx], anchors)
-            all_anchors = np.append(all_anchors, shifted_anchors, axis=0)
+        for idx, p in enumerate(self.pyramid_levels): # [C3, C4, C5, C6, C7] => [64, 32, 16, 8, 4]
+            anchors = generate_anchors(base_size=self.sizes[idx], ratios=self.ratios, scales=self.scales) # shape = [num_anchors=15, 4]
+            shifted_anchors = shift(image_shapes[idx], self.strides[idx], anchors) # shape = [64 * 64 * num_anchors, 4]
+            all_anchors = np.append(all_anchors, shifted_anchors, axis=0) # shape = [(64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, 4]
 
-        all_anchors = np.expand_dims(all_anchors, axis=0)
+        all_anchors = np.expand_dims(all_anchors, axis=0) # shape = [1, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, 4]
 
         if torch.cuda.is_available():
-            return torch.from_numpy(all_anchors.astype(np.float32)).cuda()
+            return torch.from_numpy(all_anchors.astype(np.float32)).to(self.gpu_device)
         else:
             return torch.from_numpy(all_anchors.astype(np.float32))
 
@@ -109,7 +110,7 @@ def anchors_for_shape(
     return all_anchors
 
 
-def shift(shape, stride, anchors):
+def shift(shape, stride, anchors): # 64, 8
     shift_x = (np.arange(0, shape[1]) + 0.5) * stride
     shift_y = (np.arange(0, shape[0]) + 0.5) * stride
 

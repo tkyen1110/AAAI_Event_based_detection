@@ -9,6 +9,9 @@ from models.functions.voxel_generator import VoxelGenerator
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)  # close mulit-processing of open-cv
 
+import logging
+from utils.logger import get_logger
+logger = get_logger(name=__file__, console_handler_level=logging.DEBUG, file_handler_level=None)
 
 def getDataloader(name):
     dataset_dict = {"Prophesee": Prophesee}
@@ -77,8 +80,10 @@ class Prophesee:
                  histogram: (512, 512, 10)
         """
         boxes_list, pos_event_list, neg_event_list = [], [], []
-        bbox_file = os.path.join(self.root, self.mode, "labels", self.label_files[idx])
-        event_file = os.path.join(self.root, self.mode, "events", self.event_files[idx])
+        # bbox_file = os.path.join(self.root, self.mode, "labels", self.label_files[idx])
+        # event_file = os.path.join(self.root, self.mode, "events", self.event_files[idx])
+        bbox_file = self.label_files[idx]
+        event_file = self.event_files[idx]
 
         labels_np = np.load(bbox_file)
         events_np = np.load(event_file)
@@ -238,6 +243,7 @@ class Prophesee:
                     label_root = os.path.join(label_path_sub, lb)
                     event_files.append(event_root)
                     label_files.append(label_root)
+
         return event_files, label_files, index_files
 
     def file_index(self):

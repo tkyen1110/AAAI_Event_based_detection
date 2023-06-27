@@ -85,9 +85,11 @@ def play_files_parallel(root_dir, height, width):
 
     event_list, label_list = [], []
     for ev, lb in zip(event_files, label_files):
+        assert ev==lb, "event file and label file are incompatible"
         event_path = os.path.join(event_dir, ev)
         label_path = os.path.join(label_dir, lb)
         for e, l in zip(sorted(os.listdir(event_path)), sorted(os.listdir(label_path))):
+            assert os.path.splitext(e)[0][-3:]==os.path.splitext(l)[0][-3:], "event file and label file are incompatible"
             event_path_ = os.path.join(event_path, e)
             label_path_ = os.path.join(label_path, l)
             event_list.append(event_path_), label_list.append(label_path_)
@@ -101,6 +103,7 @@ def play_files_parallel(root_dir, height, width):
         cv2.namedWindow('gt', cv2.WINDOW_NORMAL)
 
         # load events and boxes from all files
+        title = os.path.join(*event_list[idx].split('/')[-2:])
         events = np.load(event_list[idx])
         boxes = np.load(label_list[idx])
 
@@ -116,6 +119,7 @@ def play_files_parallel(root_dir, height, width):
             # call the visualization functions
             im = vis.make_binary_histo(events_, img=im, width=width, height=height)
             draw_bboxes(im, boxes_, labelmap=labelmap)
+            cv2.putText(im, title + " {}".format(npz_num), (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, [0,0,255], 1, cv2.LINE_AA)
 
             # display the result
             cv2.imshow('gt', frame)
@@ -128,7 +132,7 @@ def parse_args():
         description='visualize one or several event files along with their boxes')
     parser.add_argument(
         '-r', '--records', type=str,
-        default="/home/wds/Desktop/prophesee_dlut/train/trainfilelist01",
+        default="/home/tkyen/opencv_practice/data/Gen4_Automotive_DMANet/prophesee_dlut/val/valfilelist00",
         help='input event files, annotation files are expected to be in the same folder')
     parser.add_argument('--height', default=720, type=int, help="image height")
     parser.add_argument('--width', default=1280, type=int, help="image width")

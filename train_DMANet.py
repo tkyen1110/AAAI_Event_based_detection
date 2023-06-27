@@ -28,6 +28,9 @@ from apex import amp
 from models.functions.warmup import WarmUpLR
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+import logging
+from utils.logger import get_logger
+logger = get_logger(name=__file__, console_handler_level=logging.DEBUG, file_handler_level=None)
 
 class AbstractTrainer(abc.ABC):
     def __init__(self, settings):
@@ -122,6 +125,10 @@ class AbstractTrainer(abc.ABC):
                                                 num_workers=self.settings.num_cpu_workers, pin_memory=False,
                                                 drop_last=True, sampler=self.train_sampler,
                                                 data_index=self.train_file_indexes)
+        # labels, batch_pos_events, batch_neg_events = next(iter(self.train_loader))
+        # print(labels.shape, len(batch_pos_events), len(batch_pos_events[0]), len(batch_pos_events[0][0]), 
+        #       batch_pos_events[0][0][0].shape, batch_pos_events[0][0][1].shape, batch_pos_events[0][0][2].shape, torch.sum(batch_pos_events[0][0][2]))
+        # (1200, 6) 2 10 3 torch.Size([51793, 5, 3]) torch.Size([51793, 3]) torch.Size([51793], )
 
         self.val_loader = self.dataset_loader(val_dataset, mode="validation",
                                               batch_size=self.settings.batch_size // self.settings.batch_size,
@@ -176,44 +183,44 @@ class DMANetDetection(AbstractTrainer):
         :param axis:
         :return: [type]: [description]
         """
-        actual_num = torch.unsqueeze(actual_num, axis + 1)
+        actual_num = torch.unsqueeze(actual_num, axis + 1) # shape = [1, 1, Num of points]
         max_num_shape = [1] * len(actual_num.shape)
-        max_num_shape[axis + 1] = -1
-        max_num = torch.arange(max_num, dtype=torch.int, device=actual_num.device).view(max_num_shape)
-        paddings_indicator = actual_num.int() > max_num
+        max_num_shape[axis + 1] = -1 # [1, -1, 1]
+        max_num = torch.arange(max_num, dtype=torch.int, device=actual_num.device).view(max_num_shape) # shape = [1, 5, 1]
+        paddings_indicator = actual_num.int() > max_num # [1, 5, Num of points]
         # paddings_indicator shape : [batch_size, max_num]
         return paddings_indicator
 
     def process_pillar_input(self, events, idx, idy):
-        pillar_x = events[idy][idx][0][..., 0].unsqueeze(0).unsqueeze(0)
+        pillar_x = events[idy][idx][0][..., 0].unsqueeze(0).unsqueeze(0) # shape = [1, 1, Num of points, 5]
         pillar_y = events[idy][idx][0][..., 1].unsqueeze(0).unsqueeze(0)
         pillar_t = events[idy][idx][0][..., 2].unsqueeze(0).unsqueeze(0)
         coors = events[idy][idx][1]
-        num_points_per_pillar = events[idy][idx][2].unsqueeze(0)
-        num_points_per_a_pillar = pillar_x.size()[3]
+        num_points_per_pillar = events[idy][idx][2].unsqueeze(0) # shape = [1, Num of points]
+        num_points_per_a_pillar = pillar_x.size()[3] # 5
         mask = self.get_paddings_indicator(num_points_per_pillar, num_points_per_a_pillar, axis=0)
-        mask = mask.permute(0, 2, 1).unsqueeze(1).type_as(pillar_x)
-        input = [pillar_x.cuda(), pillar_y.cuda(), pillar_t.cuda(),
-                     num_points_per_pillar.cuda(), mask.cuda(), coors.cuda()]
+        mask = mask.permute(0, 2, 1).unsqueeze(1).type_as(pillar_x) # [1, 1, Num of points, 5]
+        input = [pillar_x.to(self.settings.gpu_device), pillar_y.to(self.settings.gpu_device), pillar_t.to(self.settings.gpu_device),
+                     num_points_per_pillar.to(self.settings.gpu_device), mask.to(self.settings.gpu_device), coors.to(self.settings.gpu_device)]
         return input
 
     def buildModel(self):
         """Creates the specified model"""
         if self.settings.depth == 18:
             self.model = dmanet_network.DMANet18(in_channels=self.settings.nr_input_channels,
-                                                       num_classes=len(self.settings.object_classes), pretrained=False)
+                                                 num_classes=len(self.settings.object_classes), pretrained=False, gpu_device=self.settings.gpu_device)
         elif self.settings.depth == 34:
             self.model = dmanet_network.DMANet34(in_channels=self.settings.nr_input_channels,
-                                                       num_classes=len(self.settings.object_classes), pretrained=False)
+                                                 num_classes=len(self.settings.object_classes), pretrained=False, gpu_device=self.settings.gpu_device)
         elif self.settings.depth == 50:
             self.model = dmanet_network.DMANet50(in_channels=self.settings.nr_input_channels,
-                                                       num_classes=len(self.settings.object_classes), pretrained=False)
+                                                 num_classes=len(self.settings.object_classes), pretrained=False, gpu_device=self.settings.gpu_device)
         elif self.settings.depth == 101:
             self.model = dmanet_network.DMANet101(in_channels=self.settings.nr_input_channels,
-                                                        num_classes=len(self.settings.object_classes), pretrained=False)
+                                                  num_classes=len(self.settings.object_classes), pretrained=False, gpu_device=self.settings.gpu_device)
         elif self.settings.depth == 152:
             self.model = dmanet_network.DMANet152(in_channels=self.settings.nr_input_channels,
-                                                        num_classes=len(self.settings.object_classes), pretrained=False)
+                                                  num_classes=len(self.settings.object_classes), pretrained=False, gpu_device=self.settings.gpu_device)
         else:
             raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')
 
@@ -253,7 +260,6 @@ class DMANetDetection(AbstractTrainer):
 
     def train(self):
         """Main training and validation loop"""
-
         while self.epoch_step <= self.settings.epoch:
             self.trainEpoch()
             self.validationEpoch()
@@ -287,12 +293,13 @@ class DMANetDetection(AbstractTrainer):
                     # labels
                     mask_now = (bounding_box[:, -1] == (idy * self.settings.seq_len + idx))
                     mask_next = (bounding_box[:, -1] == (idy * self.settings.seq_len + idx + 1))
-                    bbox_now = bounding_box[mask_now][:, :-1]
+                    bbox_now = bounding_box[mask_now][:, :-1] # bbox_now.shape = [60, 5] [x_min, y_min, x_max, y_max, class_id]
                     bbox_next = bounding_box[mask_next][:, :-1]
                     bounding_box_now.append(bbox_now), bounding_box_next.append(bbox_next)
 
                 classification, regression, anchors, prev_states, prev_features, _ = \
                     self.model([pos_input_list, neg_input_list], prev_states=prev_states, prev_features=prev_features)
+
                 cls_loss, reg_loss = focal_loss(classification, regression, anchors, torch.tensor(bounding_box_now).cuda())
                 cls_loss, reg_loss = cls_loss.mean(), reg_loss.mean()
                 batch_cls_loss += cls_loss
@@ -326,10 +333,10 @@ class DMANetDetection(AbstractTrainer):
     def validationEpoch(self):
         self.pbar = tqdm.tqdm(total=self.nr_val_epochs, unit="Batch", unit_scale=True)
         self.model.eval()
-        dmanet_detector = DMANet_Detector(conf_threshold=0.1, iou_threshold=0.5)
+        dmanet_detector = DMANet_Detector(conf_threshold=0.1, iou_threshold=0.5, gpu_device=self.settings.gpu_device)
 
         iouv = torch.linspace(0.5, 0.95, 10).to(self.settings.gpu_device)
-        niou = iouv.numel()  # len(iouv)
+        niou = iouv.numel()  # = len(iouv) = 10
         seen = 0
         precision, recall, f1_score, m_precision, m_recall, map50, map = 0., 0., 0., 0., 0., 0., 0.
         stats, ap, ap_class = [], [], []
@@ -342,6 +349,8 @@ class DMANetDetection(AbstractTrainer):
             prev_features = None
             detection_result = []  # detection result for computing mAP
             bounding_box, pos_events, neg_events = sample_batched
+            # bounding_box.shape = [600, 6]
+            # pos_events (list) # [1, 10, [torch.from_numpy(pos_voxels), torch.from_numpy(pos_coordinates), torch.from_numpy(pos_num_points)]]
 
             with torch.no_grad():
                 for idx in range(self.settings.seq_len):
@@ -354,16 +363,17 @@ class DMANetDetection(AbstractTrainer):
                         pos_input_list.append(pos_input), neg_input_list.append(neg_input)
                     classification, regression, anchors, prev_states, prev_features, pseudo_img = \
                         self.model([pos_input_list, neg_input_list], prev_states=prev_states, prev_features=prev_features)
-                    # [coords, scores, labels]
-                    out = dmanet_detector(classification, regression, anchors, pseudo_img)
-                    detection_result.append(out)
+                    out = dmanet_detector(classification, regression, anchors, pseudo_img) # shape = [Num of detected bbox, 6]
+                                                                                           # [[x_min, y_min, x_max, y_max, scores, labels], 
+                                                                                           #  ...]
+                    detection_result.append(out) # len(detection_result) = 10
             self.pbar.update(1)
 
             for si, pred in enumerate(detection_result):
                 bbox = bounding_box[bounding_box[:, -1] == si]  # each batch
                 np_labels = bbox[bbox[:, -2] != -1.]
                 np_labels = np_labels[:, [4, 0, 1, 2, 3]]  # [cls, coords]
-                labels = torch.from_numpy(np_labels).to(self.settings.gpu_device)
+                labels = torch.from_numpy(np_labels).to(self.settings.gpu_device) # ground truth (target label)
 
                 nl = len(labels)
                 tcls = labels[:, 0].tolist() if nl else []
@@ -387,8 +397,8 @@ class DMANetDetection(AbstractTrainer):
                     tbox = labels[:, 1:5]
                     # per target class
                     for cls in torch.unique(tcls_tensor):
-                        ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1)  # prediction indices
-                        pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # target indices
+                        ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1) # target indices
+                        pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
                         # search for detections
                         if pi.shape[0]:
                             # prediction to target ious
@@ -404,6 +414,7 @@ class DMANetDetection(AbstractTrainer):
                                     if len(detected) == nl:  # all targets already located in images
                                         break
                 stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
+                #                          , scores          , labels
         self.pbar.close()
 
         # Directories
@@ -412,6 +423,10 @@ class DMANetDetection(AbstractTrainer):
             os.mkdir(save_dir)   # make dir
         names = {k: v for k, v in enumerate(self.object_classes, start=0)}  # {0: 'Pedestrian', ...}
         stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+        # stats[0].shape = [N, 10]
+        # stats[1].shape = [N,]
+        # stats[2].shape = [N,]
+        # stats[3].shape = [M,]
         if len(stats) and stats[0].any():
             precision, recall, ap, f1_score, ap_class = ap_per_class(*stats, plot=False, save_dir=save_dir, names=names)
             ap50, ap = ap[:, 0], ap.mean(axis=1)
@@ -439,7 +454,7 @@ class DMANetDetection(AbstractTrainer):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train network.")
-    parser.add_argument("--settings_file", type=str, default="/home/wds/DMANet/config/settings.yaml",
+    parser.add_argument("--settings_file", type=str, default="./config/settings.yaml",
                         help="Path to settings yaml")
 
     args = parser.parse_args()

@@ -254,7 +254,7 @@ if __name__ == "__main__":
     parser.add_argument("--settings_file", type=str, default="./config/settings.yaml",
                         help="Path to settings yaml")
     parser.add_argument("--weights", type=str,
-                        default="/home/wds/Desktop/DMANet/DMANet_model.pth",
+                        default="/home/tkyen/opencv_practice/AAAI_Event_based_detection/checkpoints/DMANet_model.pth",
                         help="model.pth path(s)")
     parser.add_argument("--conf_thresh", type=float, default=0.1,
                         help="object confidence threshold")

@@ -12,7 +12,7 @@ import os
 from glob import glob
 from dataloader.prophesee.src.io.psee_loader import PSEELoader
 import tqdm
-
+from multiprocessing import Pool
 
 DELTA_T = 50000
 SKIP_T = 50000 * 10  # skip the first 0.5s
@@ -61,8 +61,8 @@ def split_file(file_path, save_path, file_name, height, width, delta_t=None, ski
         # save .npz file if not empty
         if len(npz_e) == 10:
             if not (os.path.exists(save_event_dir) and os.path.exists(save_box_dir)):
-                os.mkdir(save_event_dir)
-                os.mkdir(save_box_dir)
+                os.makedirs(save_event_dir, exist_ok=True)
+                os.makedirs(save_box_dir, exist_ok=True)
             np.savez_compressed(save_event_file, e0=npz_e[0], e1=npz_e[1], e2=npz_e[2], e3=npz_e[3], e4=npz_e[4],
                      e5=npz_e[5], e6=npz_e[6], e7=npz_e[7], e8=npz_e[8], e9=npz_e[9])
             np.savez_compressed(save_box_file, l0=npz_l[0], l1=npz_l[1], l2=npz_l[2], l3=npz_l[3], l4=npz_l[4],
@@ -73,17 +73,36 @@ def split_file(file_path, save_path, file_name, height, width, delta_t=None, ski
 
 
 if __name__ == "__main__":
-    dataset_dir = "/home/wds/Desktop/testfilelist00/test"
-    save_dir = "/home/wds/Desktop/prophesee_gen4_npz/test/testfilelist00"
+    # dataset_dir = "/home/wds/Desktop/testfilelist00/test"
+    # save_dir = "/home/wds/Desktop/prophesee_gen4_npz/test/testfilelist00"
+
+    dataset = 'val'
+    dataset_dir = "/home/tkyen/opencv_practice/data/Gen4_Automotive/{}_dat".format(dataset)
+    save_dir = "/home/tkyen/opencv_practice/data/Gen4_Automotive_DMANet_tk/{}".format(dataset)
     files = os.listdir(dataset_dir)
     files = [time_seq_name for time_seq_name in files if time_seq_name[-3:] == 'dat']
 
     print("\033[0;31mStarting to splitting the dataset! \033[0m")
     pbar = tqdm.tqdm(total=len(files), unit="File", unit_scale=True)
-    for file in files:
+
+    multi_processing = True
+    if multi_processing:
+        mp_pool = Pool(processes=12)
+
+    for i, file in enumerate(files):
         abs_path = os.path.join(dataset_dir, file)
+
         # skip the first 0.5s
-        split_file(abs_path, save_dir, file, height=HEIGHT, width=WIDTH, delta_t=DELTA_T, skip=SKIP_T)
+        if multi_processing:
+            mp_pool.apply_async(split_file, args=(abs_path, save_dir, file, HEIGHT, WIDTH, DELTA_T, SKIP_T))
+        else:
+            split_file(abs_path, save_dir, file, height=HEIGHT, width=WIDTH, delta_t=DELTA_T, skip=SKIP_T)
         pbar.update()
+        if i == 32:
+            break
+
     pbar.close()
+    if multi_processing:
+        mp_pool.close()
+        mp_pool.join()
     print("\033[0;31mDataset is already split! \033[0m")
