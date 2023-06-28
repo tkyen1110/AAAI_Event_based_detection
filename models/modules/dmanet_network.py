@@ -9,7 +9,8 @@ from models.functions.focal_loss import FocalLoss
 from models.modules.convlstm_fusion import ConvLSTM
 from models.modules.non_local_aggregation import NonLocalAggregationModule
 from models.modules.eventpillars import PillarFeatureNet, EventPillarsScatter
-
+from models.modules.temporal_modules import ConvRNN
+from einops.layers.torch import Rearrange
 
 class DMANet(nn.Module):
 
@@ -22,11 +23,21 @@ class DMANet(nn.Module):
 
         self.middle_feature_extractor = EventPillarsScatter(output_shape=[1, 1, 512, 512, in_channels],
                                                             num_input_features=in_channels)
+        self.patch_lstm = True
+        if self.patch_lstm:
+            self.enpatch = Rearrange('b c (h h1) (w w1) -> 1 (b h w) c h1 w1', h1 = 32, w1 = 32)
+            self.depatch = Rearrange('1 (b h w) c h1 w1 -> b c (h h1) (w w1)', h = 512//32, w = 512//32)
+            self.lstm1 = ConvRNN(in_channels=in_channels*2, out_channels=64, kernel_size=3, stride=1, padding=1, cell='lstm')
 
-        self.input_layer = nn.Sequential(nn.Conv2d(in_channels*2, 64, kernel_size=7, stride=2, padding=3, bias=False),
-                                         nn.BatchNorm2d(64),
-                                         nn.ReLU(inplace=True),
-                                         nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+            self.input_layer = nn.Sequential(nn.Conv2d(64, 64, kernel_size=7, stride=2, padding=3, bias=False),
+                                            nn.BatchNorm2d(64),
+                                            nn.ReLU(inplace=True),
+                                            nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+        else:
+            self.input_layer = nn.Sequential(nn.Conv2d(in_channels*2, 64, kernel_size=7, stride=2, padding=3, bias=False),
+                                            nn.BatchNorm2d(64),
+                                            nn.ReLU(inplace=True),
+                                            nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer2_lstm = ConvLSTM(input_size=128, hidden_size=128, kernel_size=3)
@@ -124,7 +135,14 @@ class DMANet(nn.Module):
         spatial_feature = torch.cat([pos_spatial_feature, neg_spatial_feature], dim=1)
         # spatial_feature.shape = [2, D=16, H=512, W=512]
 
-        x = self.input_layer(spatial_feature) # shape = [2, 64, 128, 128]
+        if self.patch_lstm:
+            x = self.enpatch(spatial_feature)
+            x = self.lstm1(x)
+            x = self.depatch(x)
+            x = self.input_layer(x) # shape = [2, 64, 128, 128]
+        else:
+            x = self.input_layer(spatial_feature) # shape = [2, 64, 128, 128]
+
         x1 = self.layer1(x) # shape = [2, 64, 128, 128]
 
         if prev_states is None:

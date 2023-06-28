@@ -32,6 +32,16 @@ import logging
 from utils.logger import get_logger
 logger = get_logger(name=__file__, console_handler_level=logging.DEBUG, file_handler_level=None)
 
+#     Class            Events              Labels           Precision           Recall             mAP@0.5           mAP@0.5:0.95 
+#      all             25580            173203              0.628              0.438              0.465              0.241
+# pedestrian             25580             21960               0.54              0.307              0.328              0.118
+# two wheeler             25580              5979              0.513              0.519              0.489              0.215
+#      car             25580            116697              0.882              0.678              0.776              0.488
+#    truck             25580             17137              0.555              0.574              0.571              0.336
+#      bus             25580              5234               0.56              0.261              0.303              0.184
+# traffic sign             25580              2692              0.599              0.409              0.403              0.172
+# traffic light             25580              3504              0.746              0.315              0.387              0.173
+
 class AbstractTrainer(abc.ABC):
     def __init__(self, settings):
         self.settings = settings
@@ -270,7 +280,7 @@ class DMANetDetection(AbstractTrainer):
         self.pbar = tqdm.tqdm(total=self.nr_train_epochs, unit="Batch", unit_scale=True,
                               desc="Epoch: {}".format(self.epoch_step))
         self.model.train()
-        focal_loss = FocalLoss()
+        focal_loss = FocalLoss(gpu_device=self.settings.gpu_device)
 
         for i_batch, sample_batched in enumerate(self.train_loader):
             if self.epoch_step < self.settings.warm:
@@ -300,7 +310,7 @@ class DMANetDetection(AbstractTrainer):
                 classification, regression, anchors, prev_states, prev_features, _ = \
                     self.model([pos_input_list, neg_input_list], prev_states=prev_states, prev_features=prev_features)
 
-                cls_loss, reg_loss = focal_loss(classification, regression, anchors, torch.tensor(bounding_box_now).cuda())
+                cls_loss, reg_loss = focal_loss(classification, regression, anchors, torch.tensor(bounding_box_now).to(self.settings.gpu_device))
                 cls_loss, reg_loss = cls_loss.mean(), reg_loss.mean()
                 batch_cls_loss += cls_loss
                 batch_reg_loss += reg_loss

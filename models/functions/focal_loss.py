@@ -5,7 +5,9 @@ from torch.autograd import Variable
 
 
 class FocalLoss(nn.Module):
-    #def __init__(self):
+    def __init__(self, gpu_device=0):
+        super(FocalLoss, self).__init__()
+        self.gpu_device = gpu_device
 
     def forward(self, classifications, regressions, anchors, annotations):
         # classifications.shape = [2, (64*64 + 32*32 + 16*16 + 8*8 + 4*4) * num_anchors, num_classes] = [2, 81840, 7]
@@ -38,7 +40,7 @@ class FocalLoss(nn.Module):
 
             if bbox_annotation.shape[0] == 0:
                 if torch.cuda.is_available():
-                    alpha_factor = torch.ones(classification.shape).cuda() * alpha
+                    alpha_factor = torch.ones(classification.shape).to(self.gpu_device) * alpha
 
                     alpha_factor = 1. - alpha_factor
                     focal_weight = classification
@@ -49,7 +51,7 @@ class FocalLoss(nn.Module):
                     # cls_loss = focal_weight * torch.pow(bce, gamma)
                     cls_loss = focal_weight * bce
                     classification_losses.append(cls_loss.sum())
-                    regression_losses.append(torch.tensor(0).float().cuda())
+                    regression_losses.append(torch.tensor(0).float().to(self.gpu_device))
 
                 else:
                     alpha_factor = torch.ones(classification.shape) * alpha
@@ -77,7 +79,7 @@ class FocalLoss(nn.Module):
             targets = torch.ones(classification.shape) * -1 # shape = [81840, 7]
 
             if torch.cuda.is_available():
-                targets = targets.cuda()
+                targets = targets.to(self.gpu_device)
 
             targets[torch.lt(IoU_max, 0.4), :] = 0
 
@@ -91,7 +93,7 @@ class FocalLoss(nn.Module):
             targets[positive_indices, assigned_annotations[positive_indices, 4].long()] = 1
 
             if torch.cuda.is_available():
-                alpha_factor = torch.ones(targets.shape).cuda() * alpha
+                alpha_factor = torch.ones(targets.shape).to(self.gpu_device) * alpha
             else:
                 alpha_factor = torch.ones(targets.shape) * alpha
 
@@ -105,7 +107,7 @@ class FocalLoss(nn.Module):
             cls_loss = focal_weight * bce
 
             if torch.cuda.is_available():
-                cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss, torch.zeros(cls_loss.shape).cuda())
+                cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss, torch.zeros(cls_loss.shape).to(self.gpu_device))
             else:
                 cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss, torch.zeros(cls_loss.shape))
 
@@ -139,7 +141,7 @@ class FocalLoss(nn.Module):
                 targets = targets.t()
 
                 if torch.cuda.is_available():
-                    targets = targets/torch.Tensor([[0.1, 0.1, 0.2, 0.2]]).cuda()
+                    targets = targets/torch.Tensor([[0.1, 0.1, 0.2, 0.2]]).to(self.gpu_device)
                 else:
                     targets = targets/torch.Tensor([[0.1, 0.1, 0.2, 0.2]])
 
@@ -153,7 +155,7 @@ class FocalLoss(nn.Module):
                 regression_losses.append(regression_loss.mean())
             else:
                 if torch.cuda.is_available():
-                    regression_losses.append(torch.tensor(0).float().cuda())
+                    regression_losses.append(torch.tensor(0).float().to(self.gpu_device))
                 else:
                     regression_losses.append(torch.tensor(0).float())
 

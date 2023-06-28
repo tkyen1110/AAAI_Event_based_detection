@@ -28,8 +28,8 @@ optim:
   warm: 1
   tbptt: [-1]
 checkpoint:
-  save_dir: "/home/tkyen/opencv_practice/AAAI_Event_based_detection/checkpoints"  # ./DMANet
-  resume_training: True
+  save_dir: "/home/tkyen/opencv_practice/AAAI_Event_based_detection/checkpoints_patch_lstm"  # ./DMANet
+  resume_training: False
   resume_file: "/home/tkyen/opencv_practice/AAAI_Event_based_detection/checkpoints/DMANet_model.pth"
   # Networks trained for classification can be reused as starting point for object detection networks on trained the same dataset
   use_pretrained: False
