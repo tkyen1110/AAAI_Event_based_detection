@@ -430,7 +430,7 @@ class DMANetDetection(AbstractTrainer):
         # Directories
         save_dir = os.path.join(self.settings.save_dir, "det_result")
         if not os.path.exists(save_dir):
-            os.mkdir(save_dir)   # make dir
+            os.makedirs(save_dir, exist_ok=True) # make dir
         names = {k: v for k, v in enumerate(self.object_classes, start=0)}  # {0: 'Pedestrian', ...}
         stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
         # stats[0].shape = [N, 10]

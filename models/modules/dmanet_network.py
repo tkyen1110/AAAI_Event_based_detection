@@ -136,6 +136,8 @@ class DMANet(nn.Module):
         # spatial_feature.shape = [2, D=16, H=512, W=512]
 
         if self.patch_lstm:
+            if prev_states is None:
+                self.lstm1.reset_all()
             x = self.enpatch(spatial_feature)
             x = self.lstm1(x)
             x = self.depatch(x)
