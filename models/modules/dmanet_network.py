@@ -23,7 +23,7 @@ class DMANet(nn.Module):
 
         self.middle_feature_extractor = EventPillarsScatter(output_shape=[1, 1, 512, 512, in_channels],
                                                             num_input_features=in_channels)
-        self.patch_lstm = True
+        self.patch_lstm = False
         if self.patch_lstm:
             self.enpatch = Rearrange('b c (h h1) (w w1) -> 1 (b h w) c h1 w1', h1 = 32, w1 = 32)
             self.depatch = Rearrange('1 (b h w) c h1 w1 -> b c (h h1) (w w1)', h = 512//32, w = 512//32)
