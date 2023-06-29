@@ -54,8 +54,8 @@ class Settings:
             self.pretrained_model = checkpoint["pretrained_model"]
 
             # --- directories ---
-            directories = settings["dir"]
-            log_dir = directories["log"]
+            # directories = settings["dir"]
+            log_dir = self.save_dir
 
             # --- logs ---
             if generate_log:
