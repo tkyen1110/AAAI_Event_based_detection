@@ -76,20 +76,22 @@ if __name__ == "__main__":
     # dataset_dir = "/home/wds/Desktop/testfilelist00/test"
     # save_dir = "/home/wds/Desktop/prophesee_gen4_npz/test/testfilelist00"
 
-    dataset = 'val'
-    dataset_dir = "/home/tkyen/opencv_practice/data/Gen4_Automotive/{}_dat".format(dataset)
-    save_dir = "/home/tkyen/opencv_practice/data/Gen4_Automotive_DMANet_tk/{}".format(dataset)
+    dataset = 'test'
+    dataset_dir = "/home/tkyen/opencv_practice/data_1/Gen4_Automotive/{}_dat".format(dataset)
+    save_dir = "/home/tkyen/opencv_practice/data_2/Gen4_Automotive_DMANet_tk/{}/{}filelist00".format(dataset, dataset)
     files = os.listdir(dataset_dir)
     files = [time_seq_name for time_seq_name in files if time_seq_name[-3:] == 'dat']
 
     print("\033[0;31mStarting to splitting the dataset! \033[0m")
     pbar = tqdm.tqdm(total=len(files), unit="File", unit_scale=True)
 
-    multi_processing = True
+    multi_processing = False
     if multi_processing:
         mp_pool = Pool(processes=12)
 
     for i, file in enumerate(files):
+        # if file != "moorea_2019-02-19_005_td_915500000_975500000_td.dat":
+        #     continue
         abs_path = os.path.join(dataset_dir, file)
 
         # skip the first 0.5s
@@ -97,11 +99,10 @@ if __name__ == "__main__":
             mp_pool.apply_async(split_file, args=(abs_path, save_dir, file, HEIGHT, WIDTH, DELTA_T, SKIP_T))
         else:
             split_file(abs_path, save_dir, file, height=HEIGHT, width=WIDTH, delta_t=DELTA_T, skip=SKIP_T)
+            # split_file(abs_path, save_dir, file, height=HEIGHT, width=WIDTH, delta_t=DELTA_T, skip=0)
         pbar.update()
-        if i == 32:
-            break
-
     pbar.close()
+
     if multi_processing:
         mp_pool.close()
         mp_pool.join()

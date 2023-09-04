@@ -132,7 +132,8 @@ def parse_args():
         description='visualize one or several event files along with their boxes')
     parser.add_argument(
         '-r', '--records', type=str,
-        default="/home/tkyen/opencv_practice/data/Gen4_Automotive_DMANet/prophesee_dlut/val/valfilelist00",
+        # default="/home/tkyen/opencv_practice/data_2/Gen4_Automotive_DMANet/prophesee_dlut/val/valfilelist00",
+        default="/home/tkyen/opencv_practice/data_2/Gen4_Automotive_DMANet_tk/test/testfilelist00",
         help='input event files, annotation files are expected to be in the same folder')
     parser.add_argument('--height', default=720, type=int, help="image height")
     parser.add_argument('--width', default=1280, type=int, help="image width")

@@ -27,7 +27,7 @@ from utils.metrics import ap_per_class
 from apex import amp
 from models.functions.warmup import WarmUpLR
 torch.multiprocessing.set_sharing_strategy('file_system')
-
+from numpy.lib import recfunctions as rfn
 import logging
 from utils.logger import get_logger
 logger = get_logger(name=__file__, console_handler_level=logging.DEBUG, file_handler_level=None)
@@ -105,6 +105,7 @@ class AbstractTrainer(abc.ABC):
                                              self.settings.height,
                                              self.settings.width,
                                              mode="training",
+                                             # mode="testing",
                                              voxel_size=self.settings.voxel_size,
                                              max_num_points=self.settings.max_num_points,
                                              max_voxels=self.settings.max_voxels,
@@ -120,6 +121,7 @@ class AbstractTrainer(abc.ABC):
                                            self.settings.height,
                                            self.settings.width,
                                            mode="validation",
+                                           # mode="testing",
                                            voxel_size=self.settings.voxel_size,
                                            max_num_points=self.settings.max_num_points,
                                            max_voxels=self.settings.max_voxels,
@@ -130,7 +132,9 @@ class AbstractTrainer(abc.ABC):
 
         self.train_sampler = torch.utils.data.sampler.SubsetRandomSampler(list(range(len(train_dataset))))
 
-        self.train_loader = self.dataset_loader(train_dataset, mode="training",
+        self.train_loader = self.dataset_loader(train_dataset, 
+                                                mode="training",
+                                                # mode="testing",
                                                 batch_size=self.settings.batch_size,
                                                 num_workers=self.settings.num_cpu_workers, pin_memory=False,
                                                 drop_last=True, sampler=self.train_sampler,
@@ -140,7 +144,9 @@ class AbstractTrainer(abc.ABC):
         #       batch_pos_events[0][0][0].shape, batch_pos_events[0][0][1].shape, batch_pos_events[0][0][2].shape, torch.sum(batch_pos_events[0][0][2]))
         # (1200, 6) 2 10 3 torch.Size([51793, 5, 3]) torch.Size([51793, 3]) torch.Size([51793], )
 
-        self.val_loader = self.dataset_loader(val_dataset, mode="validation",
+        self.val_loader = self.dataset_loader(val_dataset, 
+                                              mode="validation", 
+                                              # mode="testing",
                                               batch_size=self.settings.batch_size // self.settings.batch_size,
                                               num_workers=self.settings.num_cpu_workers, pin_memory=False,
                                               drop_last=True, sampler=None,
@@ -193,23 +199,23 @@ class DMANetDetection(AbstractTrainer):
         :param axis:
         :return: [type]: [description]
         """
-        actual_num = torch.unsqueeze(actual_num, axis + 1) # shape = [1, 1, Num of points]
+        actual_num = torch.unsqueeze(actual_num, axis + 1) # shape = [1, 1, Num of pillars]
         max_num_shape = [1] * len(actual_num.shape)
         max_num_shape[axis + 1] = -1 # [1, -1, 1]
         max_num = torch.arange(max_num, dtype=torch.int, device=actual_num.device).view(max_num_shape) # shape = [1, 5, 1]
-        paddings_indicator = actual_num.int() > max_num # [1, 5, Num of points]
+        paddings_indicator = actual_num.int() > max_num # [1, 5, Num of pillars]
         # paddings_indicator shape : [batch_size, max_num]
         return paddings_indicator
 
     def process_pillar_input(self, events, idx, idy):
-        pillar_x = events[idy][idx][0][..., 0].unsqueeze(0).unsqueeze(0) # shape = [1, 1, Num of points, 5]
+        pillar_x = events[idy][idx][0][..., 0].unsqueeze(0).unsqueeze(0) # shape = [1, 1, Num of pillars, 5]
         pillar_y = events[idy][idx][0][..., 1].unsqueeze(0).unsqueeze(0)
         pillar_t = events[idy][idx][0][..., 2].unsqueeze(0).unsqueeze(0)
         coors = events[idy][idx][1]
-        num_points_per_pillar = events[idy][idx][2].unsqueeze(0) # shape = [1, Num of points]
+        num_points_per_pillar = events[idy][idx][2].unsqueeze(0) # shape = [1, Num of pillars]
         num_points_per_a_pillar = pillar_x.size()[3] # 5
         mask = self.get_paddings_indicator(num_points_per_pillar, num_points_per_a_pillar, axis=0)
-        mask = mask.permute(0, 2, 1).unsqueeze(1).type_as(pillar_x) # [1, 1, Num of points, 5]
+        mask = mask.permute(0, 2, 1).unsqueeze(1).type_as(pillar_x) # [1, 1, Num of pillars, 5]
         input = [pillar_x.to(self.settings.gpu_device), pillar_y.to(self.settings.gpu_device), pillar_t.to(self.settings.gpu_device),
                      num_points_per_pillar.to(self.settings.gpu_device), mask.to(self.settings.gpu_device), coors.to(self.settings.gpu_device)]
         return input
@@ -373,6 +379,7 @@ class DMANetDetection(AbstractTrainer):
                         pos_input_list.append(pos_input), neg_input_list.append(neg_input)
                     classification, regression, anchors, prev_states, prev_features, pseudo_img = \
                         self.model([pos_input_list, neg_input_list], prev_states=prev_states, prev_features=prev_features)
+                    # [coords, scores, labels]
                     out = dmanet_detector(classification, regression, anchors, pseudo_img) # shape = [Num of detected bbox, 6]
                                                                                            # [[x_min, y_min, x_max, y_max, scores, labels], 
                                                                                            #  ...]
@@ -407,8 +414,8 @@ class DMANetDetection(AbstractTrainer):
                     tbox = labels[:, 1:5]
                     # per target class
                     for cls in torch.unique(tcls_tensor):
-                        ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1) # target indices
-                        pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
+                        ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1)  # target indices
+                        pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)   # prediction indices
                         # search for detections
                         if pi.shape[0]:
                             # prediction to target ious
@@ -461,6 +468,167 @@ class DMANetDetection(AbstractTrainer):
         #     self.max_validation_mAP = map50
         self.saveCheckpoint()
 
+    def test(self):
+        self.testEpoch()
+
+    def reformat_result(self, list_bboxes, list_times):
+        outputs = []
+        BBOX_DTYPE = np.dtype({'names':['t','x','y','w','h','class_id','class_confidence','track_id'], 'formats':['<u8','<f4','<f4','<f4','<f4','<u1','<f4','<u4'], 'offsets':[0,8,12,16,20,24,28,32], 'itemsize':40})
+        # BBOX_DTYPE = [('t', '<u8'), ('x', '<f4'), ('y', '<f4'), ('w', '<f4'), ('h', '<f4'), ('class_id', 'u1'), ('track_id', '<u4'), ('class_confidence', '<f4')]
+        for bboxes, times in zip(list_bboxes, list_times):
+            # bboxes.shape =    [Num of detected bbox, 6]
+            #                   [[x_min, y_min, x_max, y_max, scores, labels],
+            #                    ...]
+            if len(bboxes) == 0:
+                continue
+            times = np.array(times, dtype=np.int64).repeat(len(bboxes),0)
+            scores = bboxes[:, 4].cpu().numpy().astype(np.float32)
+            labels = bboxes[:, 5].cpu().numpy().astype(np.uint32)
+            bboxes = bboxes[:, :4].cpu().numpy().astype(np.float32)
+
+            output = np.zeros((len(bboxes),), dtype=BBOX_DTYPE)
+            output['t'] = times
+            output['x'] = bboxes[:,0] / self.settings.resize * self.settings.width
+            output['y'] = bboxes[:,1] / self.settings.resize * self.settings.height
+            output['w'] = (bboxes[:,2] - bboxes[:,0]) / self.settings.resize * self.settings.width
+            output['h'] = (bboxes[:,3] - bboxes[:,1]) / self.settings.resize * self.settings.height
+            output['class_id'] = labels
+            output['class_confidence'] = scores
+
+            outputs.append(output)
+
+        return outputs
+
+    def testEpoch(self):
+        self.pbar = tqdm.tqdm(total=self.nr_val_epochs, unit="Batch", unit_scale=True)
+        self.model.eval()
+        dmanet_detector = DMANet_Detector(conf_threshold=0.1, iou_threshold=0.5, gpu_device=self.settings.gpu_device)
+
+        iouv = torch.linspace(0.5, 0.95, 10).to(self.settings.gpu_device)
+        niou = iouv.numel()  # = len(iouv) = 10
+        seen = 0
+        precision, recall, f1_score, m_precision, m_recall, map50, map = 0., 0., 0., 0., 0., 0., 0.
+        stats, ap, ap_class = [], [], []
+
+        scale = torch.tensor([self.settings.resize, self.settings.resize, self.settings.resize, self.settings.resize],
+                             dtype=torch.float32).to(self.settings.gpu_device)
+
+        prev_states = None
+        prev_features = None
+        results = []
+        for i_batch, sample_batched in enumerate(self.val_loader):
+            # prev_features = None
+            detection_result = []  # detection result for computing mAP
+            times = []
+            bounding_box, pos_events, neg_events = sample_batched
+            # bounding_box.shape = [600, 6]
+            # pos_events (list) # [1, 10, [torch.from_numpy(pos_voxels), torch.from_numpy(pos_coordinates), torch.from_numpy(pos_num_points)]]
+
+            with torch.no_grad():
+                for idx in range(self.settings.seq_len):
+                    pos_input_list, neg_input_list = [], []
+                    for idy in range(self.settings.batch_size // self.settings.batch_size):
+                        # process positive/negative events
+                        pos_input = self.process_pillar_input(pos_events, idx, idy)
+                        neg_input = self.process_pillar_input(neg_events, idx, idy)
+
+                        pos_input_list.append(pos_input), neg_input_list.append(neg_input)
+                    classification, regression, anchors, prev_states, prev_features, pseudo_img = \
+                        self.model([pos_input_list, neg_input_list], prev_states=prev_states, prev_features=prev_features)
+                    out = dmanet_detector(classification, regression, anchors, pseudo_img) # shape = [Num of detected bbox, 6]
+                                                                                           # [[x_min, y_min, x_max, y_max, scores, labels], 
+                                                                                           #  ...]
+                    detection_result.append(out) # len(detection_result) = 10
+                    times.append(i_batch*500000+idx*50000)
+                    print(times)
+                    print(detection_result)
+            self.pbar.update(1)
+            results += self.reformat_result(detection_result, times)
+
+            for si, pred in enumerate(detection_result):
+                bbox = bounding_box[bounding_box[:, -1] == si]  # each batch
+                np_labels = bbox[bbox[:, -2] != -1.]
+                np_labels = np_labels[:, [4, 0, 1, 2, 3]]  # [cls, coords]
+                labels = torch.from_numpy(np_labels).to(self.settings.gpu_device) # ground truth (target label)
+
+                nl = len(labels)
+                tcls = labels[:, 0].tolist() if nl else []
+                seen += 1
+
+                if len(pred) == 0:
+                    if nl:
+                        stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+                    continue
+                # predictions
+                predn = pred.clone()
+                predn[:, :4] /= self.settings.resize  # percent coordinates
+                predn[:, :4] *= scale  # absolute coordinates, 1280x720
+
+                # assign all predictions as incorrect
+                correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool).to(self.settings.gpu_device)
+                if nl:
+                    detected = []  # target indices
+                    tcls_tensor = labels[:, 0]
+                    # target boxes
+                    tbox = labels[:, 1:5]
+                    # per target class
+                    for cls in torch.unique(tcls_tensor):
+                        ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1) # target indices
+                        pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
+                        # search for detections
+                        if pi.shape[0]:
+                            # prediction to target ious
+                            ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices
+                            # append detections
+                            detected_set = set()
+                            for j in (ious > iouv[0]).nonzero(as_tuple=False):
+                                d = ti[i[j]]  # detected target
+                                if d.item() not in detected_set:
+                                    detected_set.add(d.item())
+                                    detected.append(d)
+                                    correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
+                                    if len(detected) == nl:  # all targets already located in images
+                                        break
+                stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
+                #                          , scores          , labels
+        self.pbar.close()
+        results = rfn.stack_arrays(results, usemask=False)
+        fpath_out = os.path.join(self.settings.dataset_path, "test_result/moorea_2019-02-19_005_td_915500000_975500000_bbox.npy")
+        np.save(fpath_out, results) # TK
+
+        # Directories
+        save_dir = os.path.join(self.settings.save_dir, "det_result")
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir, exist_ok=True) # make dir
+        names = {k: v for k, v in enumerate(self.object_classes, start=0)}  # {0: 'Pedestrian', ...}
+        stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+        # stats[0].shape = [N, 10]
+        # stats[1].shape = [N,]
+        # stats[2].shape = [N,]
+        # stats[3].shape = [M,]
+        if len(stats) and stats[0].any():
+            precision, recall, ap, f1_score, ap_class = ap_per_class(*stats, plot=False, save_dir=save_dir, names=names)
+            ap50, ap = ap[:, 0], ap.mean(axis=1)
+            m_precision, m_recall, map50, map = precision.mean(), recall.mean(), ap50.mean(), ap.mean()
+            nt = np.bincount(stats[3].astype(np.int64), minlength=self.nr_classes-1)  # number of targets per class
+        else:
+            nt = torch.zeros(1)
+
+        # Print results
+        pf = "%8s" + "%18i" * 2 + "%19.3g" * 4  # print format
+        print("\033[0;31m    Class            Events              Labels           Precision           Recall          "
+              "   mAP@0.5           mAP@0.5:0.95 \033[0m")
+        print(pf % ("all", seen, nt.sum(), m_precision, m_recall, map50, map))
+
+        # Print results per class
+        if len(stats):
+            for i, c in enumerate(ap_class):
+                print(pf % (names[c], seen, nt[c], precision[i], recall[i], ap50[i], ap[i]))
+                self.writer.add_scalar("Validation/" + names[c], ap50[i], self.epoch_step)
+        self.writer.add_scalar("Validation/mAP@0.5", map50, self.epoch_step)
+        # if self.max_validation_mAP < map50:
+        #     self.max_validation_mAP = map50
+        self.saveCheckpoint()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train network.")
@@ -477,4 +645,5 @@ if __name__ == "__main__":
         raise ValueError("Model name %s specified in the settings file is not implemented" % settings.model_name)
 
     trainer.train()
+    # trainer.test()
 

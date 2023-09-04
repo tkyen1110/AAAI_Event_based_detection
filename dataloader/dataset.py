@@ -59,7 +59,6 @@ class Prophesee:
         filelist_path = os.path.join(self.root, self.mode)
 
         self.event_files, self.label_files, self.index_files = self.load_data_files(filelist_path, self.root, self.mode)
-
         assert len(self.event_files) == len(self.label_files)
 
         self.object_classes = object_classes
@@ -218,7 +217,7 @@ class Prophesee:
         return boxes[mask]
 
     @staticmethod
-    @nb.jit()
+    # @nb.jit()
     def load_data_files(filelist_path, root, mode):
         idx = 0
         event_files = []
@@ -239,6 +238,7 @@ class Prophesee:
                 index_files.append(idx)
 
                 for ev, lb in zip(event_path_list, label_path_list):
+                    assert ev.replace("ev", "")==lb.replace("lb", "")
                     event_root = os.path.join(event_path_sub, ev)
                     label_root = os.path.join(label_path_sub, lb)
                     event_files.append(event_root)
